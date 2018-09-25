@@ -1,0 +1,4 @@
+venv/
+.vscode
+test.py
+nodes.txt
