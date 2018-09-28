@@ -94,6 +94,7 @@ class NodePlug:
             start = time.time()
             tries += 1
             res = yield s.get(host)
+            res.raise_for_status()
             j = res.json()
 
             end = time.time()
@@ -213,7 +214,7 @@ def scan_nodes(reactor):
         try:
             c = yield id_data
             ident, ident_time, ident_tries = c
-            logging.info(Fore.GREEN + 'Successfully obtained config' + Fore.RESET)
+            logging.info(Fore.GREEN + 'Successfully obtained server type' + Fore.RESET)
 
             ns['srvtype'] = ident
             ns['timing']['ident'] = ident_time
@@ -226,11 +227,11 @@ def scan_nodes(reactor):
                 up_nodes.append((host, ns['srvtype'], rpc(reactor, host, 'condenser_api.get_dynamic_global_properties')))
             req_success += 1
         except ServerDead as e:
-            logging.error(Fore.RED + '[load config]' + str(e) + Fore.RESET)
+            logging.error(Fore.RED + '[ident jussi]' + str(e) + Fore.RESET)
             if "only supports websockets" in str(e):
                 ns['err_reason'] = 'WS Only'
         except Exception as e:
-            logging.warning(Fore.RED + 'Unknown error occurred (conf)...' + Fore.RESET)
+            logging.warning(Fore.RED + 'Unknown error occurred (ident jussi)...' + Fore.RESET)
             logging.warning('[%s] %s', type(e), str(e))
     
     print('{}[Stage 2 / 4] Filtering out bad nodes{}'.format(Fore.GREEN, Fore.RESET))    
