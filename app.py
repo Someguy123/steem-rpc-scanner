@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Steem node RPC scanner
 # by @someguy123
-# version 1.0
+# version 1.1
 # Python 3.7.0 or higher recommended
 from twisted.internet import defer
 from twisted.internet.defer import inlineCallbacks
@@ -12,25 +12,45 @@ import time
 from colorama import Fore, Back
 import asyncio
 import argparse
+from privex.loghelper import LogHelper
 import logging
+import signal
 
-parser = argparse.ArgumentParser(description='Scan RPC nodes in nodes.txt')
-parser.add_argument('-v', metavar='verbose', dest='verbose', type=bool, 
-                    default=False, help='display debugging')
+parser = argparse.ArgumentParser(description='Scan RPC nodes from a list of URLs to determine their last block, version, reliability, and response time.')
+parser.add_argument('-v', dest='verbose', action='store_true', default=False, help='display debugging')
+parser.add_argument('-q', dest='quiet', action='store_true', default=False, help='only show warnings or worse')
+parser.add_argument('-f', dest='nodefile', default='nodes.txt', help='specify a custom file to read nodes from (default: nodes.txt)')
+parser.set_defaults(verbose=False, quiet=False)
 args = parser.parse_args()
+
+debug_level = logging.INFO
 
 verbose = args.verbose
 if verbose:
-    logging.basicConfig(level=logging.DEBUG)
+    print('Verbose mode enabled.')
+    debug_level = logging.DEBUG
+elif args.quiet:
+    debug_level = logging.WARNING
+else:
+    print("For more verbose logging (such as detailed scanning actions), use `./app.py -v`")
+    print("For less output, use -q for quiet mode (display only warnings and errors)")
+
+f = logging.Formatter('[%(asctime)s]: %(funcName)-14s : %(levelname)-8s:: %(message)s')
+lh = LogHelper(handler_level=debug_level, formatter=f)
+lh.add_console_handler()
+log = lh.get_logger()
+
 # s = requests.Session()
-s = AsyncSession(n=20)
+s = AsyncSession(n=50)
 
 RPC_TIMEOUT = 5
 MAX_TRIES = 5
 # nodes to be specified line by line. format: http://gtg.steem.house:8090
-NODE_LIST_FILE = "nodes.txt"
-NODE_LIST = open(NODE_LIST_FILE, 'r').readlines()
+# NODE_LIST_FILE = "nodes.txt"
+NODE_LIST = open(args.nodefile, 'r').readlines()
 NODE_LIST = [n.strip() for n in NODE_LIST]
+# Allow nodes to be commented out with # symbol
+NODE_LIST = [n for n in NODE_LIST if n[0] != '#']
 node_status = {}
 
 class ServerDead(BaseException):
@@ -44,17 +64,17 @@ class NodePlug:
             tn = yield self._tryNode(host, method, params)
             return tn
         except Exception as e:
-            logging.debug('caught in tryNode and raised')
+            log.debug('caught in tryNode and raised')
             raise e
     
     @defer.inlineCallbacks
     def _tryNode(self, host, method, params=[], tries=0):
         if tries >= MAX_TRIES:
-            logging.debug('SERVER IS DEAD')
+            log.debug('SERVER IS DEAD')
             raise ServerDead('{} did not respond properly after {} tries'.format(host, tries))
         
         try:
-            logging.info('{} {} attempt {}'.format(host, method, tries))
+            log.debug('{} {} attempt {}'.format(host, method, tries))
             start = time.time()
             tries += 1
             res = yield _rpc(host, method, params)
@@ -65,12 +85,12 @@ class NodePlug:
             # if we made it this far, we're fine :)
             success = True
             results = [res, runtime, tries]
-            logging.debug(Fore.GREEN + '[{}] Successful request for {}'.format(host, method) + Fore.RESET)
+            log.debug(Fore.GREEN + '[{}] Successful request for {}'.format(host, method) + Fore.RESET)
             return tuple(results)
         except Exception as e:
             if 'HTTPError' in str(type(e)) and '426 Client Error' in str(e):
                 raise ServerDead('Server {} only supports websockets'.format(host))
-            logging.info('%s [%s] %s attempt %d failed. Message: %s %s %s', Fore.RED, method, host, tries, type(e), str(e), Fore.RESET)
+            log.info('%s [%s] %s attempt %d failed. Message: %s %s %s', Fore.RED, method, host, tries, type(e), str(e), Fore.RESET)
             dl = yield deferLater(self.reactor, 10, self._tryNode, host, method, params, tries)
             return dl
 
@@ -81,16 +101,16 @@ class NodePlug:
             tn = yield self._identJussi(host)
             return tn
         except Exception as e:
-            logging.debug('caught in identJussi and raised')
+            log.debug('caught in identJussi and raised')
             raise e
     
     @defer.inlineCallbacks
     def _identJussi(self, host, tries=0):
         if tries >= MAX_TRIES:
-            logging.debug('[identJussi] SERVER IS DEAD')
+            log.debug('[identJussi] SERVER IS DEAD')
             raise ServerDead('{} did not respond properly after {} tries'.format(host, tries))
         try:
-            logging.info('{} identJussi attempt {}'.format(host, tries))
+            log.debug('{} identJussi attempt {}'.format(host, tries))
             start = time.time()
             tries += 1
             res = yield s.get(host)
@@ -108,12 +128,12 @@ class NodePlug:
             # if we made it this far, we're fine :)
             success = True
             results = [srvtype, runtime, tries]
-            logging.debug(Fore.GREEN + '[{}] Successful request for identJussi'.format(host) + Fore.RESET)
+            log.debug(Fore.GREEN + '[{}] Successful request for identJussi'.format(host) + Fore.RESET)
             return tuple(results)
         except Exception as e:
             if 'HTTPError' in str(type(e)) and '426 Client Error' in str(e):
                 raise ServerDead('Server {} only supports websockets'.format(host))
-            logging.info('%s [identJussi] %s attempt %d failed. Message: %s %s %s', Fore.RED, host, tries, type(e), str(e), Fore.RESET)
+            log.debug('%s [identJussi] %s attempt %d failed. Message: %s %s %s', Fore.RED, host, tries, type(e), str(e), Fore.RESET)
             dl = yield deferLater(self.reactor, 10, self._identJussi, host, tries)
             return dl
 
@@ -128,7 +148,7 @@ def rpc(reactor, host, method, params=[]):
     :raises: ServerDead - tried too many times and failed
     """
     # tries = 0
-    logging.info(Fore.BLUE + 'Attempting method {method} on server {host}. Will try {tries} times'.format(
+    log.debug(Fore.BLUE + 'Attempting method {method} on server {host}. Will try {tries} times'.format(
         tries=MAX_TRIES, host=host, method=method
     ) + Fore.RESET)
     # d = defer.Deferred()
@@ -136,7 +156,7 @@ def rpc(reactor, host, method, params=[]):
     try:
         d = yield np.tryNode(reactor, host, method, params)
     except ServerDead as e:
-        logging.debug('caught in rpc and raised')
+        log.debug('caught in rpc and raised')
         raise e
 
     # return tuple(results)
@@ -150,7 +170,7 @@ def identifyNode(reactor, host):
     :raises: ServerDead - tried too many times and failed
     """
     # tries = 0
-    logging.info(Fore.BLUE + 'Attempting method identifyNode on server {host}. Will try {tries} times'.format(
+    log.debug(Fore.BLUE + 'Attempting method identifyNode on server {host}. Will try {tries} times'.format(
         tries=MAX_TRIES, host=host
     ) + Fore.RESET)
     # d = defer.Deferred()
@@ -158,7 +178,7 @@ def identifyNode(reactor, host):
     try:
         d = yield np.identJussi(reactor, host)
     except ServerDead as e:
-        logging.debug('caught in identifyNode and raised')
+        log.debug('caught in identifyNode and raised')
         raise e
 
     # return tuple(results)
@@ -198,6 +218,7 @@ def scan_nodes(reactor):
     up_nodes = []
     nodes = NODE_LIST
     print('Scanning nodes... Please wait...')
+    print('{}[Stage 1 / 4] Identifying node types (jussi/appbase){}'.format(Fore.GREEN, Fore.RESET))
     for node in nodes:
         node_status[node] = dict(
             raw={}, timing={}, tries={},
@@ -205,34 +226,33 @@ def scan_nodes(reactor):
             srvtype='err'
             )
         ident_nodes.append((node, identifyNode(reactor, node)))
-        logging.info('Identifying ', node)
+        log.info('Identifying %s', node)
     req_success = 0
-    print('{}[Stage 1 / 4] Identifying node types (jussi/appbase){}'.format(Fore.GREEN, Fore.RESET))
 
     for host, id_data in ident_nodes:
         ns = node_status[host]        
         try:
             c = yield id_data
             ident, ident_time, ident_tries = c
-            logging.info(Fore.GREEN + 'Successfully obtained server type' + Fore.RESET)
+            log.info(Fore.GREEN + 'Successfully obtained server type for node %s' + Fore.RESET, host)
 
             ns['srvtype'] = ident
             ns['timing']['ident'] = ident_time
             ns['tries']['ident'] = ident_tries
             if ns['srvtype'] == 'jussi':
-                logging.warning('Server {} is JUSSI'.format(host))
+                log.info('Server {} is JUSSI'.format(host))
                 up_nodes.append((host, ns['srvtype'], rpc(reactor, host, 'get_dynamic_global_properties')))
             if ns['srvtype'] == 'appbase':
-                logging.warning('Server {} is APPBASE (no jussi)'.format(host))
+                log.info('Server {} is APPBASE (no jussi)'.format(host))
                 up_nodes.append((host, ns['srvtype'], rpc(reactor, host, 'condenser_api.get_dynamic_global_properties')))
             req_success += 1
         except ServerDead as e:
-            logging.error(Fore.RED + '[ident jussi]' + str(e) + Fore.RESET)
+            log.error(Fore.RED + '[ident jussi]' + str(e) + Fore.RESET)
             if "only supports websockets" in str(e):
                 ns['err_reason'] = 'WS Only'
         except Exception as e:
-            logging.warning(Fore.RED + 'Unknown error occurred (ident jussi)...' + Fore.RESET)
-            logging.warning('[%s] %s', type(e), str(e))
+            log.warning(Fore.RED + 'Unknown error occurred (ident jussi)...' + Fore.RESET)
+            log.warning('[%s] %s', type(e), str(e))
     
     print('{}[Stage 2 / 4] Filtering out bad nodes{}'.format(Fore.GREEN, Fore.RESET))    
     for host, srvtype, blkdata in up_nodes:
@@ -246,13 +266,14 @@ def scan_nodes(reactor):
             if srvtype == 'appbase':
                 conf_nodes.append((host, rpc(reactor, host, 'condenser_api.get_config')))
                 prop_nodes.append((host, rpc(reactor, host, 'condenser_api.get_dynamic_global_properties')))
+            log.info(Fore.GREEN + 'Node %s seems fine' + Fore.RESET, host)
         except ServerDead as e:
-            logging.error(Fore.RED + '[badnodefilter]' + str(e) + Fore.RESET)
+            log.error(Fore.RED + '[badnodefilter]' + str(e) + Fore.RESET)
             if "only supports websockets" in str(e):
                 ns['err_reason'] = 'WS Only'
         except Exception as e:
-            logging.warning(Fore.RED + 'Unknown error occurred (badnodefilter)...' + Fore.RESET)
-            logging.warning('[%s] %s', type(e), str(e))
+            log.warning(Fore.RED + 'Unknown error occurred (badnodefilter)...' + Fore.RESET)
+            log.warning('[%s] %s', type(e), str(e))
     
     print('{}[Stage 3 / 4] Obtaining steemd versions {}'.format(Fore.GREEN, Fore.RESET))    
     for host, cfdata in conf_nodes:
@@ -261,7 +282,7 @@ def scan_nodes(reactor):
             # config, config_time, config_tries = rpc(node, 'get_config')
             c = yield cfdata
             config, config_time, config_tries = c
-            logging.info(Fore.GREEN + 'Successfully obtained config' + Fore.RESET)
+            log.info(Fore.GREEN + 'Successfully obtained config for node %s' + Fore.RESET, host)
 
             ns['raw']['config'] = config
             ns['timing']['config'] = config_time
@@ -269,12 +290,12 @@ def scan_nodes(reactor):
             ns['version'] = config.get('STEEM_BLOCKCHAIN_VERSION', config.get('STEEMIT_BLOCKCHAIN_VERSION', 'Unknown'))
             req_success += 1
         except ServerDead as e:
-            logging.error(Fore.RED + '[load config]' + str(e) + Fore.RESET)
+            log.error(Fore.RED + '[load config]' + str(e) + Fore.RESET)
             if "only supports websockets" in str(e):
                 ns['err_reason'] = 'WS Only'
         except Exception as e:
-            logging.warning(Fore.RED + 'Unknown error occurred (conf)...' + Fore.RESET)
-            logging.warning('[%s] %s', type(e), str(e))
+            log.warning(Fore.RED + 'Unknown error occurred (conf)...' + Fore.RESET)
+            log.warning('[%s] %s', type(e), str(e))
     
     print('{}[Stage 4 / 4] Checking current block / block time{}'.format(Fore.GREEN, Fore.RESET))    
     for host, prdata in prop_nodes:
@@ -283,7 +304,7 @@ def scan_nodes(reactor):
             # head_block_number
             # time (UTC)
             props, props_time, props_tries = yield prdata
-            logging.debug(Fore.GREEN + 'Successfully obtained props' + Fore.RESET)
+            log.debug(Fore.GREEN + 'Successfully obtained props' + Fore.RESET)
             ns['raw']['props'] = props
             ns['timing']['props'] = props_time
             ns['tries']['props'] = props_tries
@@ -292,13 +313,13 @@ def scan_nodes(reactor):
             req_success += 1
 
         except ServerDead as e:
-            logging.error(Fore.RED + '[load props]' + str(e) + Fore.RESET)
-            # logging.error(str(e))
+            log.error(Fore.RED + '[load props]' + str(e) + Fore.RESET)
+            # log.error(str(e))
             if "only supports websockets" in str(e):
                 ns['err_reason'] = 'WS Only'
         except Exception as e:
-            logging.warning(Fore.RED + 'Unknown error occurred (prop)...' + Fore.RESET)
-            logging.warning('[%s] %s', type(e), str(e))
+            log.warning(Fore.RED + 'Unknown error occurred (prop)...' + Fore.RESET)
+            log.warning('[%s] %s', type(e), str(e))
     
     print_nodes(node_status)
 
@@ -351,4 +372,7 @@ def print_nodes(list_nodes):
         ), Fore.RESET)
 
 if __name__ == "__main__":
+    # Make CTRL-C work properly with Twisted's Reactor
+    # https://stackoverflow.com/a/4126412/2648583
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     react(scan_nodes)
