@@ -19,6 +19,8 @@ from rpcscanner import load_nodes, settings, RPCScanner
 from rpcscanner.RPCScanner import NodeStatus
 
 MAX_SCORE = 20
+# How many normal tries are there?
+BASE_TRIES = 3
 settings.plugins = True
 settings.quiet = True
 
@@ -148,7 +150,7 @@ Version: {n.version}
 Block: {n.current_block}
 Time: {dt}
 Plugins: {plug_tried} / {plug_total}
-Retries: {n.total_tries}
+Retries: {n.total_retries}
 Score: {score} (out of {MAX_SCORE})
 """)
     return sys.exit(return_code)
@@ -185,7 +187,7 @@ def score_node(min_score: int, n: NodeStatus) -> Tuple[int, int, str]:
         score += MAX_SCORE
 
     # Nodes lose half a score point for every retry needed
-    if n.total_tries > 0: score -= (n.total_tries / 2)
+    if n.total_retries > 0: score -= (n.total_tries / 2)
 
     # Nodes lose 2 points for each plugin that's responding incorrectly
     if plug_tried < plug_total: score -= (plug_total - plug_tried) * 2

@@ -11,7 +11,7 @@ BASE_DIR = dirname(dirname(abspath(__file__)))
 
 
 RPC_TIMEOUT = 5
-MAX_TRIES = 5
+MAX_TRIES = 3
 PUB_PREFIX = 'STM'   # Used as part of the thorough plugin tests for checking correct keys are returned
 
 

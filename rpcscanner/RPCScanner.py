@@ -48,10 +48,19 @@ class NodeStatus:
 
     @property
     def total_tries(self) -> int:
-        """How many retries were required to get the data for this node?"""
+        """How many requests were required to get the data for this node?"""
         tries_total = 0
         for tries_type, tries in self.tries.items():
             tries_total += tries
+        return tries_total
+
+    @property
+    def total_retries(self) -> int:
+        """How many times did we have to retry a call to get the data for this node?"""
+        tries_total = 0
+        for tries_type, tries in self.tries.items():
+            if tries > 1:
+                tries_total += tries
         return tries_total
 
     @property
@@ -116,6 +125,8 @@ class RPCScanner:
         if settings.plugins:
             p('{}[Thorough Plugin Check] User specified --plugins. Now running thorough plugin tests for '
               'alive nodes.{}'.format(Fore.GREEN, Fore.RESET))
+            pt_list = []
+
             for host, data in self.node_status.items():
                 status = len(data['raw'])
                 if status == 0:
@@ -124,18 +135,22 @@ class RPCScanner:
                 log.info(f'{Fore.BLUE} > Running plugin tests for node {host} ...{Fore.RESET}')
                 mt = MethodTests(host, reactor)
                 for plugin in TEST_PLUGINS_LIST:
-                    pt = yield self.plugin_test(host, plugin, mt)
-                log.info(f'{Fore.GREEN} (+) Finished plugin tests for node {host} ... {Fore.RESET}')
-
+                    pt_list.append((host, self.plugin_test(host, plugin, mt)))
+            finished = []
+            for host, pt in pt_list:
+                yield from pt
+                if host not in finished:
+                    finished.append(host)
+                    log.info(f'{Fore.GREEN} (+) Finished plugin tests for node {host} ... {Fore.RESET}')
 
     @inlineCallbacks
     def plugin_test(self, host: str, plugin_name: str, mt: MethodTests):
         ns = self.node_status[host]
         try:
-            log.info(f' >>> Testing {plugin_name} for node {host} ...')
+            log.debug(f' >>> Testing {plugin_name} for node {host} ...')
             res = yield mt.test(plugin_name)
             ns['plugins'].append(plugin_name)
-            log.info(f'{Fore.GREEN} +++ The API {plugin_name} is functioning for node {host}{Fore.RESET}')
+            log.debug(f'{Fore.GREEN} +++ The API {plugin_name} is functioning for node {host}{Fore.RESET}')
             return res
         except Exception as e:
             log.error(

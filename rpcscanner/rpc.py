@@ -4,6 +4,7 @@ import time
 import twisted.internet.reactor
 from typing import Union, Tuple, Iterable
 from colorama import Fore
+from requests.adapters import HTTPAdapter
 from twisted.internet import defer
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.task import deferLater
@@ -56,7 +57,7 @@ def identify_node(reactor, host):
     np = NodePlug(reactor)
     try:
         d = yield np.ident_jussi(host)
-        log.info('Successfully identified %s', host)
+        log.debug('Successfully identified %s', host)
     except ServerDead as e:
         log.debug('caught in identify_node and raised')
         raise e
@@ -78,7 +79,8 @@ def _rpc(host: str, method: str, params=None):
         "jsonrpc": "2.0",
         "id": 1,
     }
-    res = yield s.post(host, data=json.dumps(payload), headers=headers, timeout=RPC_TIMEOUT)
+    s.mount(host, HTTPAdapter(max_retries=1))
+    res = yield s.post(host, data=json.dumps(payload), headers=headers, timeout=(2, RPC_TIMEOUT))
     res.raise_for_status()
     # print(res.text[0:10])
     res = res.json()
