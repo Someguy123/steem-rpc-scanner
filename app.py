@@ -8,12 +8,13 @@ Version 1.4
 Python 3.7.0 or higher recommended
 
 """
+from os.path import join
 
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.task import react
 from privex.loghelper import LogHelper
 from privex.helpers import ErrHelpParser
-from rpcscanner import RPCScanner, settings
+from rpcscanner import RPCScanner, settings, BASE_DIR, load_nodes
 import logging
 import signal
 
@@ -55,8 +56,10 @@ log = lh.get_logger()
 
 @inlineCallbacks
 def scan(reactor):
-    rs = RPCScanner(reactor)
+    node_list = load_nodes(settings.node_file)
+    rs = RPCScanner(reactor, nodes=node_list)
     yield from rs.scan_nodes()
+    rs.print_nodes()
 
 
 if __name__ == "__main__":

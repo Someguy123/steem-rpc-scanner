@@ -1,11 +1,15 @@
-from os.path import join
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import List, Tuple
 
 import twisted.internet.reactor
 import logging
 from colorama import Fore
+from dateutil.parser import parse
+from privex.helpers import empty
 from twisted.internet.defer import inlineCallbacks
 from rpcscanner.MethodTests import MethodTests
-from rpcscanner.core import TEST_PLUGINS_LIST, BASE_DIR
+from rpcscanner.core import TEST_PLUGINS_LIST
 from rpcscanner.rpc import rpc, identify_node
 from rpcscanner.exceptions import ServerDead
 from rpcscanner import settings
@@ -13,29 +17,83 @@ from rpcscanner import settings
 log = logging.getLogger(__name__)
 
 
+@dataclass
+class NodeStatus:
+    host: str
+    raw: dict
+    timing: dict
+    tries: dict
+    plugins: list
+    err_reason: str = None
+    srvtype: str = 'Unknown'
+    current_block: int = None
+    block_time: datetime = None
+    version: str = None
+
+    _statuses = {
+        0: "Dead",
+        1: "Unstable",
+        2: "Online",
+    }
+
+    @property
+    def status(self) -> int:
+        """Status of the node as a number from 0 to 2"""
+        return len(self.raw)
+
+    @property
+    def status_human(self) -> str:
+        """Status of the node as a description, e.g. dead, unstable, online"""
+        return self._statuses[self.status]
+
+    @property
+    def total_tries(self) -> int:
+        """How many retries were required to get the data for this node?"""
+        tries_total = 0
+        for tries_type, tries in self.tries.items():
+            tries_total += tries
+        return tries_total
+
+    @property
+    def avg_tries(self) -> str:
+        """The average amount of tries required per API call to get a valid response, as a 2 DP formatted string"""
+        return '{:.2f}'.format(self.total_tries / len(self.tries))
+
+    @property
+    def plugin_counts(self) -> Tuple[int, int]:
+        """Returns as a tuple: how many plugins worked, and how many were tested"""
+        return len(self.plugins), len(TEST_PLUGINS_LIST)
+
+    def __post_init__(self):
+        bt = self.block_time
+        if not empty(bt):
+            if type(bt) is str and bt.lower() == 'error':
+                self.block_time = None
+                return
+            self.block_time = parse(bt)
+
+
 class RPCScanner:
 
-    def __init__(self, reactor: twisted.internet.reactor):
+    def __init__(self, reactor: twisted.internet.reactor, nodes: list):
         self.conf_nodes = []
         self.prop_nodes = []
         self.reactor = reactor
         self.node_status = {}
         self.ident_nodes = []
         self.up_nodes = []
-        node_list = open(join(BASE_DIR, settings.node_file), 'r').readlines()
-        # nodes to be specified line by line. format: http://gtg.steem.house:8090
-        # NODE_LIST_FILE = "nodes.txt"
-        node_list = [n.strip() for n in node_list]
-        # Allow nodes to be commented out with # symbol
-        node_list = [n for n in node_list if n[0] != '#']
-        self.nodes = node_list
+        self.nodes = nodes
         self.req_success = 0
 
     @inlineCallbacks
-    def scan_nodes(self):
+    def scan_nodes(self, quiet=False):
+        def p(*args):
+            if not quiet:
+                print(*args)
+
         reactor = self.reactor
-        print('Scanning nodes... Please wait...')
-        print('{}[Stage 1 / 4] Identifying node types (jussi/appbase){}'.format(Fore.GREEN, Fore.RESET))
+        p('Scanning nodes... Please wait...')
+        p('{}[Stage 1 / 4] Identifying node types (jussi/appbase){}'.format(Fore.GREEN, Fore.RESET))
         for node in self.nodes:
             self.node_status[node] = dict(
                 raw={}, timing={}, tries={}, plugins=[],
@@ -46,18 +104,18 @@ class RPCScanner:
 
         yield from self.identify_nodes()
 
-        print('{}[Stage 2 / 4] Filtering out bad nodes{}'.format(Fore.GREEN, Fore.RESET))
+        p('{}[Stage 2 / 4] Filtering out bad nodes{}'.format(Fore.GREEN, Fore.RESET))
         yield from self.filter_badnodes()
 
-        print('{}[Stage 3 / 4] Obtaining steemd versions {}'.format(Fore.GREEN, Fore.RESET))
+        p('{}[Stage 3 / 4] Obtaining steemd versions {}'.format(Fore.GREEN, Fore.RESET))
         yield from self.scan_versions()
 
-        print('{}[Stage 4 / 4] Checking current block / block time{}'.format(Fore.GREEN, Fore.RESET))
+        p('{}[Stage 4 / 4] Checking current block / block time{}'.format(Fore.GREEN, Fore.RESET))
         yield from self.scan_block_info()
 
         if settings.plugins:
-            print('{}[Thorough Plugin Check] User specified --plugins. Now running thorough '
-                  'plugin tests for alive nodes.{}'.format(Fore.GREEN, Fore.RESET))
+            p('{}[Thorough Plugin Check] User specified --plugins. Now running thorough plugin tests for '
+              'alive nodes.{}'.format(Fore.GREEN, Fore.RESET))
             for host, data in self.node_status.items():
                 status = len(data['raw'])
                 if status == 0:
@@ -69,7 +127,6 @@ class RPCScanner:
                     pt = yield self.plugin_test(host, plugin, mt)
                 log.info(f'{Fore.GREEN} (+) Finished plugin tests for node {host} ... {Fore.RESET}')
 
-        self.print_nodes()
 
     @inlineCallbacks
     def plugin_test(self, host: str, plugin_name: str, mt: MethodTests):
@@ -188,6 +245,14 @@ class RPCScanner:
                 log.warning(Fore.RED + 'Unknown error occurred (conf)...' + Fore.RESET)
                 log.warning('[%s] %s', type(e), str(e))
 
+    @property
+    def node_objs(self) -> List[NodeStatus]:
+        return [NodeStatus(host=h, **n) for h, n in self.node_status.items()]
+
+    def get_node(self, node: str) -> NodeStatus:
+        n = self.node_status[node]
+        return NodeStatus(host=node, **n)
+
     def print_nodes(self):
         list_nodes = self.node_status
         print(Fore.BLUE, '(S) - SSL, (H) - HTTP : (A) - normal appbase (J) - jussi', Fore.RESET)
@@ -247,3 +312,6 @@ class RPCScanner:
 
                 fmt_params.append(f'{f_plugins}{Fore.RESET}')
             print(fmt_str.format(*fmt_params), Fore.RESET)
+
+
+
