@@ -87,6 +87,7 @@ class RPCScanner:
     def __init__(self, reactor: twisted.internet.reactor, nodes: list):
         self.conf_nodes = []
         self.prop_nodes = []
+        self.ver_nodes = []
         self.reactor = reactor
         self.node_status = {}
         self.ident_nodes = []
@@ -158,6 +159,16 @@ class RPCScanner:
 
     @inlineCallbacks
     def identify_nodes(self):
+        """
+        Scans each node listed in :py:attr:`.ident_nodes` to attempt to identify whether
+        the node is behind Jussi, the node is pure appbase, or the node only supports websockets.
+
+        Outputs the result into :py:attr:`.node_status` for the given host, in the 'srvtype' key.
+
+        Generates a list of working nodes into :py:attr:`.up_nodes` to be further processed 
+        by :py:meth:`.filter_badnodes`
+
+        """
         reactor = self.reactor
         for host, id_data in self.ident_nodes:
             ns = self.node_status[host]
@@ -187,8 +198,15 @@ class RPCScanner:
 
     @inlineCallbacks
     def filter_badnodes(self):
+        """
+        Loads the dynamic properties for each host listed in :py:attr:`.up_nodes` to verify they're functioning.
+
+        Queues up requests for `get_config` and `get_dynamic_global_properties` into :py:attr:`.conf_nodes` and
+        :py:attr:`.prop_node` to be retrieved by :py:meth:`.scan_block_info` and :py:meth:`.scan_versions`
+        """
         prop_nodes = self.prop_nodes
         conf_nodes = self.conf_nodes
+        ver_nodes = self.ver_nodes
         reactor = self.reactor
         for host, srvtype, blkdata in self.up_nodes:
             ns = self.node_status[host]
@@ -199,9 +217,11 @@ class RPCScanner:
                 if srvtype == 'jussi':
                     conf_nodes.append((host, rpc(reactor, host, 'get_config')))
                     prop_nodes.append((host, rpc(reactor, host, 'get_dynamic_global_properties')))
+                    ver_nodes.append((host, rpc(reactor, host, 'get_version')))
                 if srvtype == 'appbase':
                     conf_nodes.append((host, rpc(reactor, host, 'condenser_api.get_config')))
                     prop_nodes.append((host, rpc(reactor, host, 'condenser_api.get_dynamic_global_properties')))
+                    ver_nodes.append((host, rpc(reactor, host, 'condenser_api.get_version')))
                 log.info(Fore.GREEN + 'Node %s seems fine' + Fore.RESET, host)
             except ServerDead as e:
                 log.error(Fore.RED + '[badnodefilter]' + str(e) + Fore.RESET)
@@ -214,6 +234,13 @@ class RPCScanner:
 
     @inlineCallbacks
     def scan_block_info(self):
+        """
+        Scans each host in :py:attr:`.prop_nodes` (populated by :py:meth:`.filter_badnodes` ) to obtain:
+          - Current block number (head_block_number)
+          - Block time (time)
+        
+        Stores the results in :py:attr:`.node_status`
+        """
         for host, prdata in self.prop_nodes:
             ns = self.node_status[host]
             try:
@@ -239,18 +266,24 @@ class RPCScanner:
 
     @inlineCallbacks
     def scan_versions(self):
-        for host, cfdata in self.conf_nodes:
+        """
+        Scans each host in :py:attr:`.ver_nodes` (populated by :py:meth:`.filter_badnodes`) to
+        obtain the Steem version number of each node.
+
+        Outputs the version into the 'version' key in the node's :py:attr:`.node_status` object.
+        """
+        for host, cfdata in self.ver_nodes:
             ns = self.node_status[host]
             try:
                 # config, config_time, config_tries = rpc(node, 'get_config')
                 c = yield cfdata
                 config, config_time, config_tries = c
-                log.info(Fore.GREEN + 'Successfully obtained config for node %s' + Fore.RESET, host)
+                log.info(Fore.GREEN + 'Successfully obtained version for node %s' + Fore.RESET, host)
 
                 ns['raw']['config'] = config
                 ns['timing']['config'] = config_time
                 ns['tries']['config'] = config_tries
-                ns['version'] = config.get('STEEM_BLOCKCHAIN_VERSION', config.get('STEEMIT_BLOCKCHAIN_VERSION', 'Unknown'))
+                ns['version'] = config.get('blockchain_version', 'Unknown')
                 self.req_success += 1
             except ServerDead as e:
                 log.error(Fore.RED + '[load config]' + str(e) + Fore.RESET)

@@ -150,6 +150,7 @@ Version: {n.version}
 Block: {n.current_block}
 Time: {dt}
 Plugins: {plug_tried} / {plug_total}
+PluginList: {n.plugins}
 Retries: {n.total_retries}
 Score: {score} (out of {MAX_SCORE})
 """)
