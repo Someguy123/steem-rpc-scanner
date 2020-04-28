@@ -7,3 +7,4 @@ quiet: bool = False
 plugins: bool = False
 node_file: str = 'nodes.txt'
 test_account: str = 'someguy123'
+test_post: str = 'announcement-soft-fork-0-22-2-released-steem-in-a-box-update'

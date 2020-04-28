@@ -19,7 +19,11 @@ TEST_PLUGINS_LIST = (
     'condenser_api.get_account_history',
     'account_history_api.get_account_history',
     'condenser_api.get_witness_by_account',
-    'condenser_api.get_accounts'
+    'condenser_api.get_accounts',
+    'condenser_api.get_blog',
+    'condenser_api.get_content',
+    'condenser_api.get_followers',
+    'bridge.get_trending_topics',
 )
 
 
