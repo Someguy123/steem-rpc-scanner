@@ -54,6 +54,11 @@ cd "$DIR"
 #: ${PORT='8484'}
 #: ${GU_WORKERS='10'} # Number of Gunicorn worker processes
 
+[[ -f "${DIR}/nodes.conf" ]] || {
+    msgerr green " >> Copying example.nodes.conf -> nodes.conf"
+    cp -v "${DIR}/example.nodes.conf" "${DIR}/nodes.conf"
+}
+
 case "$1" in
     health | HEALTH | check | CHECK)
         pipenv run ./health.py "${@:2}"

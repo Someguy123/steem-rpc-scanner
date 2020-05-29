@@ -11,4 +11,6 @@ RUN pipenv install --ignore-pipfile
 
 COPY . /app
 
+RUN cp /app/example.nodes.conf /app/nodes.conf
+
 ENTRYPOINT [ "/app/run.sh" ]
