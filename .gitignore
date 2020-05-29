@@ -1,4 +1,9 @@
-venv/
-.vscode
+/venv/
+/env/
+/.vscode/
+/.idea/
+/.env
+__pycache__
 test.py
 nodes.txt
+nodes.conf

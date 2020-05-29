@@ -1,0 +1,10 @@
+/venv
+/env/
+/.env
+/test.py
+/logs
+/.vscode
+/.idea
+__pycache__
+/nodes.conf
+/nodes.txt
