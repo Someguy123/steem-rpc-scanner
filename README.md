@@ -1,3 +1,9 @@
+![Python Version](https://img.shields.io/github/pipenv/locked/python-version/someguy123/steem-rpc-scanner?logo=python&logoColor=yellow)
+![Github Version](https://img.shields.io/github/v/release/someguy123/steem-rpc-scanner?include_prereleases&logo=github&sort=semver)
+![Github Code Size](https://img.shields.io/github/languages/code-size/someguy123/steem-rpc-scanner?logo=github)
+![DockerHub Version](https://img.shields.io/docker/v/someguy123/rpc-scanner?label=Docker%20someguy123%2Frpc-scanner&logo=docker&sort=semver)
+![Docker Image Size](https://img.shields.io/docker/image-size/someguy123/rpc-scanner?logo=docker&sort=semver)
+
 # Hive / Steem-based RPC node scanner
 
 by [@someguy123](https://peakd.com/@someguy123)
@@ -22,6 +28,59 @@ A fast and easy to use Python script which scans [Hive](https://www.hive.io), [S
 Python 3.8.0 or higher strongly recommended
 
 Python 3.7.x may or may not work
+
+# Quickstart with Docker
+
+This RPC scanner is designed to work out-of-the-box with no manual configuration required, other than installing
+dependencies.
+
+Through the [use of Docker](https://www.docker.com/get-started) of my pre-built docker images, you don't even
+need to install Python or any library dependencies, it Just Works™
+
+NOTE: As long as you specify the full tag `someguy123/rpc-scanner`, it will be auto-downloaded from DockerHub if 
+you don't already have the docker image installed. 
+
+Docker will not automatically update the image though, you'll need to run the command 
+`docker pull someguy123/rpc-scanner` occasionally, to update the image when new versions are released.
+
+**Quickstart commands**
+
+```sh
+# View the help for app.py and health.py (the main python files containing the various sub-commands)
+docker run --rm -it someguy123/rpc-scanner scan --help
+docker run --rm -it someguy123/rpc-scanner health --help
+
+# Run the RPC Scanner 'app.py' in quiet mode, which scans all nodes in 'nodes.conf', including individual API tests
+# for RPC plugin health, and outputs their health status as a colourful pretty printed table.
+# By default, example.nodes.conf is used, unless you attach a custom one as a volume to /app/nodes.conf
+docker run --rm -it someguy123/rpc-scanner scan -q --plugins
+
+# Run the RPC scanner 'app.py' and mount /root/my_nodes.conf into the container, so that the scanner uses 
+# your custom node list, instead of the default example.nodes.conf
+docker run --rm -v /root/my_nodes.conf:/app/nodes.conf -it someguy123/rpc-scanner scan -q --plugins
+
+# Scan an individual RPC node using 'health.py scan' in quiet mode. This emits a standard UNIX exit code,
+# with zero (0) if the node gets a score of at least MAX_SCORE - 10 (default: 50 - 10 = 40), and 
+# non-zero (default 8) if the node scores less than MAX_SCORE - 10 (default: < 40)
+docker run --rm -it someguy123/rpc-scanner health -q scan https://hived.privex.io
+
+# Scan an individual RPC node, but only with API method testing - no preliminary node software identification,
+# version retrieval, or stability testing etc. unlike 'app.py' and 'health.py scan'.
+# NOTE: There are several helpful aliases available, the below 3 examples all run the same 
+# command under-the-hood (./health.py test_methods) 
+docker run --rm -it someguy123/rpc-scanner health test_methods https://api.hive.blog
+docker run --rm -it someguy123/rpc-scanner test_methods https://api.hive.blog
+docker run --rm -it someguy123/rpc-scanner apis https://api.hive.blog
+docker run --rm -it someguy123/rpc-scanner meths https://api.hive.blog
+
+# Test only an individual API method. Again, the below 3 commands are equivalent to eachother 
+docker run --rm -it someguy123/rpc-scanner health test_method https://hive.3speak.online condenser_api.get_blog
+docker run --rm -it someguy123/rpc-scanner meth https://hive.3speak.online condenser_api.get_blog
+docker run --rm -it someguy123/rpc-scanner api https://hive.3speak.online condenser_api.get_blog
+
+# To update your rpc-scanner docker image, simply use docker pull
+docker pull someguy123/rpc-scanner
+```
 
 # Install
 

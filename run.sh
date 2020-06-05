@@ -55,9 +55,9 @@ cd "$DIR"
 #: ${GU_WORKERS='10'} # Number of Gunicorn worker processes
 
 [[ -f "${DIR}/nodes.conf" ]] || {
-    >&2 msgerr green " >> Copying example.nodes.conf -> nodes.conf"
-    >&2 cp -v "${DIR}/example.nodes.conf" "${DIR}/nodes.conf"
-}
+    msg green " >> Copying example.nodes.conf -> nodes.conf"
+    cp -v "${DIR}/example.nodes.conf" "${DIR}/nodes.conf"
+} >&2
 
 case "$1" in
     health | HEALTH | check | CHECK)
@@ -68,9 +68,14 @@ case "$1" in
         pipenv run ./app.py "${@:2}"
         exit $?
         ;;
-        #    prod*)
-        #        pipenv run hypercorn -b "${HOST}:${PORT}" -w "$GU_WORKERS" wsgi
-        #        ;;
+    api | test_meth | testmeth | test-meth | meth | method | testmethod | test_method | test-method)
+        pipenv run ./health.py test_method "${@:2}"
+        exit $?
+        ;;
+    apis | test_meths | testmeths | test-meths | meths | methods | testmethods | test_methods | test-methods)
+        pipenv run ./health.py test_methods "${@:2}"
+        exit $?
+        ;;
     update | upgrade)
         msg ts bold green " >> Updating files from Github"
         git pull
