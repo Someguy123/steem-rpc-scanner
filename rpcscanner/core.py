@@ -3,12 +3,12 @@
 import logging
 import sys
 import re
-from os.path import dirname, abspath, join, exists, isabs
+from os.path import join, exists, isabs
 from os import makedirs
 from typing import List, Optional
 from privex.loghelper import LogHelper
 from rpcscanner import settings
-from rpcscanner.settings import BASE_DIR, LOG_LEVEL, LOG_DIR
+from rpcscanner.settings import BASE_DIR, LOG_LEVEL, LOG_DIR, find_file
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +60,11 @@ def setup_loggers(*loggers, console=True, file_dbg=True, file_err=True):
         yield con, tfh_dbg, tfh_err, lg
 
 
-con_handler, _, _, _ = list(setup_loggers())[0]
+con_handler, tfh_dbg_handler, tfh_err_handler, _ = list(setup_loggers())[0]
 
 
 RE_FIND_NODES = re.compile(r'^(https?://[a-zA-Z0-9./_:-]+).*?', re.MULTILINE)
+"""Regex to extract valid URLs which are at the start of lines"""
 
 
 def load_nodes(file: str) -> List[str]:
@@ -74,4 +75,8 @@ def load_nodes(file: str) -> List[str]:
         nodes = fh.read()
         node_list = RE_FIND_NODES.findall(nodes)
     return [n.strip() for n in node_list]
+
+
+# Resolve settings.node_file into an absolute path
+settings.node_file = find_file(settings.node_file, throw=False)
 

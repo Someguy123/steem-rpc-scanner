@@ -55,8 +55,8 @@ cd "$DIR"
 #: ${GU_WORKERS='10'} # Number of Gunicorn worker processes
 
 [[ -f "${DIR}/nodes.conf" ]] || {
-    msgerr green " >> Copying example.nodes.conf -> nodes.conf"
-    cp -v "${DIR}/example.nodes.conf" "${DIR}/nodes.conf"
+    >&2 msgerr green " >> Copying example.nodes.conf -> nodes.conf"
+    >&2 cp -v "${DIR}/example.nodes.conf" "${DIR}/nodes.conf"
 }
 
 case "$1" in

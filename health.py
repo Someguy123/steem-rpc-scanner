@@ -4,30 +4,43 @@ Health check script - test individual nodes, with system return codes based on s
 
 Designed for use in bash scripts
 """
-import dotenv
-dotenv.load_dotenv()
-
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import textwrap
 import signal
+from colorama import Fore
 from datetime import datetime
-from typing import Tuple
-
-from privex.helpers import ErrHelpParser, empty
-
-from rpcscanner import load_nodes, settings, RPCScanner, set_logging_level, clear_handlers
+from typing import Tuple, Union, Dict
+from privex.helpers import ErrHelpParser, empty, DictObject, empty_if
+from rpcscanner import load_nodes, settings, RPCScanner, MethodTests, get_supported_methods, \
+    RPCError, ServerDead
+from rpcscanner.rpc import rpc
+from rpcscanner.settings import MAX_SCORE
+from rpcscanner import arguments, get_filtered_methods
 from rpcscanner.RPCScanner import NodeStatus, TOTAL_STAGES_TRACKED
 
-MAX_SCORE = 50
+log = logging.getLogger('rpcscanner.health_cli')
+
+
 # How many normal tries are there?
 BASE_TRIES = 3
 settings.plugins = True
 # settings.quiet = True
 
 help_text = textwrap.dedent('''\
+
+    Someguy123's Hive / Steem-based RPC Scanner tool
+    (C) 2020 Someguy123 ( https://peakd.com/@someguy123 ) / Privex Inc. ( https://wwww.privex.io )
+    
+    Source Code: https://github.com/Someguy123/steem-rpc-scanner
+    License: GNU AGPL 3.0
+    
+    For more user friendly / human readable output, use app.py - see './app.py -h'. The app.py script
+    is designed to simply scan ``nodes.conf`` (or an alternative file specified via ``NODE_FILE`` or ``-f``),
+    and output the results in a colour coded, tabular format, designed for human readability.
 
     This health check script has two modes:
 
@@ -62,8 +75,13 @@ help_text = textwrap.dedent('''\
 
 ''')
 
+no_plugins_help = f'Do NOT test individual plugin APIs when scanning RPC nodes. This will speed up scanning, but '\
+                  f'will give less accurate test results as only very basic API tests will be done. NOTE: When plugin '\
+                  f'scanning is disabled, scores still go up to {MAX_SCORE}, but node scores will not be degraded '\
+                  f'by plugin test results.'
+
 parser = ErrHelpParser(
-    description="Someguy123's Steem Node Health Checker",
+    description="Someguy123's Hive/Steem RPC Node Health Checker",
     formatter_class=argparse.RawDescriptionHelpFormatter,
     epilog=help_text
 )
@@ -71,13 +89,9 @@ parser = ErrHelpParser(
 parser.add_argument('-s', dest='min_score', type=int, default=MAX_SCORE - 10,
                     help=f'Minimum score required before assuming a node is good (1 to {MAX_SCORE})')
 
-parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', default=settings.quiet,
-                    help=f'Quiet logging mode')
+arguments.add_arguments(parser, 'verbose', 'quiet', 'nodefile')
 
-parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False,
-                    help=f'Verbose logging mode')
-
-parser.set_defaults(verbose=settings.verbose, quiet=settings.quiet)
+parser.set_defaults()
 
 subparser = parser.add_subparsers()
 
@@ -101,28 +115,110 @@ def list_nodes(opt):
     # react(_list_nodes, (opt.detailed, opt.min_score,))
 
 
+def test_method(opt):
+    meth = opt.method.lower()
+    node = opt.node
+    params = opt.params
+    print('====================================================================================', file=sys.stderr)
+    print(f'# {Fore.CYAN}Testing Node: {node}       {Fore.MAGENTA}API Method: {meth}{Fore.RESET}\n', file=sys.stderr)
+    loop = asyncio.get_event_loop()
+    res = loop.run_until_complete(_test_methods(node, meth, params=params, auto_exit=False))
+    status = res.methods[meth]
+
+    if status:
+        print(f"{meth:<50} {Fore.GREEN}WORKING{Fore.RESET}\n")
+        return sys.exit(settings.GOOD_RETURN_CODE)
+    print(f"{meth:<50} {Fore.RED}BROKEN{Fore.RESET}\n")
+    return sys.exit(settings.BAD_RETURN_CODE)
+
+
+def test_methods(opt):
+    print('====================================================================================', file=sys.stderr)
+    print(f'# {Fore.CYAN}Testing Node: {Fore.BLUE}{opt.node}{Fore.RESET}', file=sys.stderr)
+    print(f'# {Fore.MAGENTA}API Methods: {Fore.YELLOW}{opt.methods}{Fore.RESET}', file=sys.stderr)
+    print('------------------------------------------------------------------------------------', file=sys.stderr)
+    # try:
+    loop = asyncio.get_event_loop()
+    res = loop.run_until_complete(_test_methods(opt.node, *opt.methods, params=opt.params, auto_exit=False))
+
+    total_methods, working, broken = len(list(opt.methods)), 0, 0
+    if 'min_methods' in args and not empty(args.min_methods):
+        min_meths = args.min_methods
+    else:
+        min_meths = 1 if int(total_methods * 0.75) < 1 else int(total_methods * 0.75)
+    for meth, status in res.methods.items():
+        if status:
+            print(f"{meth:<50} {Fore.GREEN}WORKING{Fore.RESET}")
+            working += 1
+        else:
+            print(f"{meth:<50} {Fore.RED}BROKEN{Fore.RESET}")
+            broken += 1
+
+    print('------------------------------------------------------------------------------------', file=sys.stderr)
+    print(f"# {Fore.CYAN}WORKING | BROKEN | TOTAL: {Fore.GREEN}{working}{Fore.RESET} | "
+          f"{Fore.RED}{broken}{Fore.RESET} | {Fore.MAGENTA}{total_methods}{Fore.RESET}")
+    
+    if working < min_meths: zstatus = f"{Fore.RED}BAD"
+    elif working == total_methods: zstatus = f"{Fore.GREEN}PERFECT"
+    else: zstatus = f"{Fore.LIGHTGREEN_EX}GOOD"
+    print(f"# {Fore.BLUE}Overall status: {zstatus}{Fore.RESET}")
+    print(f"# {Fore.MAGENTA}Min working methods for GOOD status: {Fore.LIGHTGREEN_EX}{min_meths}{Fore.RESET}")
+
+    print('\n====================================================================================', file=sys.stderr)
+    print()
+
+    if working < min_meths:
+        return sys.exit(settings.BAD_RETURN_CODE)
+    return sys.exit(settings.GOOD_RETURN_CODE)
+
+
+# -------------------------------------------------- scan ------------------------------------------------
 p_scan = subparser.add_parser('scan', description='Scan an individual node')
 p_scan.set_defaults(func=scan)
-p_scan.add_argument('node', help='Steem Node with http(s):// prefix')
+arguments.add_arguments(p_scan, 'no_plugins', 'skip_apis', 'node')
 
-
+# -------------------------------------------------- list ------------------------------------------------
 p_list = subparser.add_parser('list', description='Scan and output a plain text list of working nodes')
 p_list.add_argument('-d', dest='detailed', action='store_true', default=False,
                     help='Return whitespace separated status information after the nodes in the list.')
-p_list.set_defaults(func=list_nodes, detailed=False)
+arguments.add_arguments(p_list, 'no_plugins', 'skip_apis', 'nodefile')
+
+p_list.set_defaults(func=list_nodes)
+
+arguments.add_defaults(parser, detailed=False)
+
+# --------------------------------------------- test_methods ---------------------------------------------
+_sup_meths = f"Supported methods: {', '.join(get_filtered_methods())}"
+
+p_test_methods = subparser.add_parser(
+    'test_methods', description="Test multiple API methods an RPC node (only method testing, no identification / basic scanning). "
+                                "If no methods are specified via positional args, all supported methods will be tested."
+)
+arguments.add_arguments(p_test_methods, 'params', 'node')
+p_test_methods.add_argument(
+    'methods', nargs='*', default=get_filtered_methods(),
+    help=f"One or more API methods to test (e.g. \"condenser_api.get_blog\") as positional args. If no methods are specified via "
+         f"positional args, all supported methods will be tested. {_sup_meths}",
+)
+p_test_methods.add_argument(
+    '-l', '--min-methods', dest='min_methods', type=int, default=None,
+    help=f'Minimum number of working methods before assuming a node is good (status code zero). Default: 75%% of tested methods.'
+)
+p_test_methods.set_defaults(func=test_methods)
+
+# --------------------------------------------- test_method ---------------------------------------------
+p_test_method = subparser.add_parser(
+    'test_method', description="Test an individual API method against an RPC node (No other scanning e.g. identification)"
+)
+arguments.add_arguments(p_test_method, 'params', 'node')
+p_test_method.add_argument(
+    'method', help=f"The API method to test (e.g. \"condenser_api.get_blog\") as a positional arg. {_sup_meths}",
+)
+p_test_method.set_defaults(func=test_method)
 
 args = parser.parse_args()
 
-if args.quiet:
-    settings.quiet = True
-    settings.verbose = False
-    clear_handlers('rpcscanner', None)
-    set_logging_level(logging.CRITICAL, None)
-elif args.verbose:
-    settings.quiet = False
-    settings.verbose = True
-    clear_handlers('rpcscanner', None)
-    set_logging_level(logging.DEBUG, None)
+arguments.handle_args(args)
 
 
 def iso_timestr(dt: datetime) -> str:
@@ -167,20 +263,83 @@ async def _scan(node, min_score):
     time_behind = "N/A"
     if n.time_behind:
         time_behind = str(n.time_behind).split('.')[0]
-    print(f"""
+    out = f"""
 Node: {node}
 Status: {status_name}
 Network: {n.network}
 Version: {n.version}
 Block: {n.current_block}
 Time: {dt} ({time_behind} ago)
-Plugins: {plug_tried} / {plug_total}
-PluginList: {n.plugins}
-PassedStages: {n.status} / {TOTAL_STAGES_TRACKED}
+"""
+    if settings.plugins:
+        out += f"Plugins: {plug_tried} / {plug_total}\nPluginList: {n.plugins}\nBrokenAPIs: {n.broken_plugins}\n"
+    out += f"""PassedStages: {n.status} / {TOTAL_STAGES_TRACKED}
 Retries: {n.total_retries}
 Score: {score} (out of {MAX_SCORE})
-""")
+"""
+    print(out)
     return sys.exit(return_code)
+
+
+async def _try_unknown_method(node: str, method: str, params: Union[list, dict] = None, auto_exit=True):
+    params = empty_if(params, [])
+    try:
+        # loop = asyncio.get_event_loop()
+        data = await rpc(host=node, method=method, params=params)
+        if empty(data[0]):
+            log.warning("Response for method '%s' from '%s' was empty. Marking as broken!", method, node)
+            return sys.exit(settings.BAD_RETURN_CODE) if auto_exit else False
+        return data
+    except RPCError as e:
+        log.error("Got RPC error in _try_unknown_method() while testing method %s against %s - Ex: %s %s", method, node, type(e), str(e))
+        return sys.exit(settings.BAD_RETURN_CODE) if auto_exit else False
+    except ServerDead as e:
+        log.error(
+            "Got ServerDead error in _try_unknown_method() while testing method %s against %s - Ex: %s %s", method, node, type(e), str(e)
+        )
+        oe = e.orig_ex
+        if not empty(oe):
+            if isinstance(oe, RPCError):
+                log.error("ServerDead contained RPCError while testing method %s against %s - Ex: %s %s", method, node, type(oe), str(oe))
+        return sys.exit(settings.BAD_RETURN_CODE) if auto_exit else False
+    except Exception as e:
+        log.error("Fatal exception in _try_unknown_method() while testing method %s against %s - Ex: %s %s", method, node, type(e), str(e))
+        return sys.exit(1) if auto_exit else False
+
+
+async def _test_methods(node: str, *methods: str, params='[]', auto_exit=True) -> Union[DictObject, Dict[str, dict]]:
+    # mt = MethodTests(node)
+    # loop = asyncio.get_event_loop()
+    sup_methods = [meth for meth in methods if meth in get_supported_methods()]
+    unsup_methods = [meth for meth in methods if meth not in get_supported_methods()]
+    if len(unsup_methods) > 0:
+        log.error(
+            f"CAUTION: The RPC API method(s) '{unsup_methods}' are not supported yet. This means a proper, thorough, example "
+            f"request + response test - has NOT been created for these method(s). Despite this, we'll try querying '{node}' "
+            f"using the unsupported method(s) using the parameters '{params}', and checking for a non-empty 'result' key in the response."
+        )
+        log.error("You can use the CLI argument '--params' to change the parameters used for unsupported RPC methods.")
+
+    res = DictObject(methods={}, errors={}, results={})
+    if len(sup_methods) > 0:
+        res = await MethodTests(node).test_all(whitelist=list(sup_methods))
+    
+    if not empty(params):
+        params = json.loads(params)
+    else:
+        params = []
+    
+    for m in unsup_methods:
+        ures = await _try_unknown_method(node=node, method=m, params=params, auto_exit=auto_exit)
+        if ures is False:
+            res.methods[m] = False
+            res.errors[m] = "unknown error"
+            continue
+        res.methods[m] = True
+        res.results[m] = ures[0]
+        
+    # return loop.run_until_complete(MethodTests(node).test_all(whitelist=list(methods)))
+    return res
 
 
 def score_node(min_score: int, n: NodeStatus) -> Tuple[int, int, str]:
@@ -217,9 +376,9 @@ def score_node(min_score: int, n: NodeStatus) -> Tuple[int, int, str]:
 
     # Nodes lose two score points for every retry needed
     if n.total_retries > 0: score -= (n.total_retries * 2)
-
+    
     # Nodes lose 4 points for each plugin that's responding incorrectly
-    if plug_tried < plug_total: score -= (plug_total - plug_tried) * 4
+    if settings.plugins and plug_tried < plug_total: score -= (plug_total - plug_tried) * 4
     
     # Out-of-sync nodes lose between 5% and 80% of the max score depending on how far behind they are
     if n.time_behind:
@@ -255,4 +414,3 @@ if __name__ == "__main__":
     except AttributeError:
         parser.error('Too few arguments')
 
-# parser.add_argument('node', help='')

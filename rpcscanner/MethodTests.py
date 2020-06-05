@@ -1,7 +1,7 @@
 import asyncio
 
 # import twisted.internet.reactor
-from privex.helpers import DictObject, empty_if
+from privex.helpers import DictObject, empty_if, empty
 # from twisted.internet.defer import inlineCallbacks
 
 from rpcscanner.settings import PUB_PREFIX
@@ -12,6 +12,14 @@ from typing import List, Dict, Tuple, Union, Awaitable, Coroutine
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def get_supported_methods() -> List[str]:
+    return list(METHOD_MAP.keys())
+
+
+def get_filtered_methods() -> List[str]:
+    return [m for m in list(METHOD_MAP.keys()) if m not in settings.SKIP_API_LIST]
 
 
 class MethodTests:
@@ -27,14 +35,18 @@ class MethodTests:
     ...     log.exception('Account history test failed for steemd.privex.io')
 
     """
-
-    def __init__(self, host: str):
+    host: str
+    loop: asyncio.AbstractEventLoop
+    test_acc: str
+    test_post: str
+    
+    def __init__(self, host: str, **kwargs):
         self.host = host
         self.test_acc = settings.test_account.lower().strip()
         self.test_post = settings.test_post.strip()
         self.loop = asyncio.get_event_loop()
 
-    async def test(self, api_name: str) -> Tuple[Union[list, dict], float, int]:
+    async def test(self, api_name: str) -> Union[Tuple[Union[list, dict], float, int], Tuple[None, None, None]]:
         """Call a test method by the API method name"""
         log.debug(f'MethodTests.test now calling API {api_name}')
         res = await METHOD_MAP[api_name](self, self.host)
@@ -70,10 +82,16 @@ class MethodTests:
             if whitelist is not None and meth not in whitelist:
                 log.debug("Skipping RPC method %s against host %s as method is not present in whitelist.", meth, self.host)
                 continue
+            # Skip APIs listed in SKIP_API_LIST only if we're not using a whitelist. If a whitelist was passed, then we should follow
+            # the whitelist, and ignore the SKIP_API_list.
+            if empty(whitelist) and meth in settings.SKIP_API_LIST:
+                log.debug("Skipping RPC method %s against host %s as method is in SKIP_API_LIST + no whitelist used.", meth, self.host)
+                continue
             if blacklist is not None and meth in blacklist:
                 log.debug("Skipping RPC method %s against host %s as method is present in blacklist.", meth, self.host)
                 continue
             tasks.append(self.loop.create_task(self._test_meth(func, meth)))
+        
         for t in tasks:
             status, result, error, meth = await t
             res.methods[meth] = status

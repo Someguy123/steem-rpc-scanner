@@ -92,7 +92,7 @@ Low level testing using :func:`rpcscanner.rpc.rpc` function call::
 """
 from rpcscanner.core import *
 from rpcscanner.rpc import NodePlug, identify_node
-from rpcscanner.MethodTests import MethodTests, METHOD_MAP
+from rpcscanner.MethodTests import MethodTests, METHOD_MAP, get_supported_methods, get_filtered_methods
 from rpcscanner.exceptions import *
 from rpcscanner.RPCScanner import RPCScanner, NodeStatus, NETWORK_COINS, TOTAL_STAGES_TRACKED
 
