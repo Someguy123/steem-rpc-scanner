@@ -8,10 +8,10 @@ nest-asyncio = "*"
 jupyter = "*"
 
 [packages]
-httpx = "*"
+httpx = ">=0.13"
 attrs = "*"
 colorama = "*"
-privex-helpers = "*"
+privex-helpers = {extras = ["extras", "net"],version = ">=2.10"}
 python-dateutil = "*"
 python-dotenv = "*"
 pytz = "*"
